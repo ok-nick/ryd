@@ -1,93 +1,96 @@
-mod config;
 mod display;
 mod options;
-mod service;
 
-use std::{ffi::OsString, io, os::windows::prelude::OsStrExt};
+use std::io;
 
 use clap::StructOpt;
+use display::{DisplayConfig, DisplayIterator};
 use thiserror::Error;
-use windows_service::{define_windows_service, service_dispatcher};
-use windows_sys::Win32::Foundation;
+use widestring::U16String;
 
 use crate::{
     display::Display,
     options::{Action, Options},
 };
 
-define_windows_service!(ffi_main, service_main);
+pub fn run(action: Action) -> Result<(), Error> {
+    match action {
+        Action::List => {
+            for (index, display) in DisplayIterator::new().enumerate() {
+                let display = display?;
+                let size = display.size();
 
-fn service_main(arguments: Vec<OsString>) {}
-
-fn ran_as_service() -> windows_service::Result<bool> {
-    match service_dispatcher::start("ahz", ffi_main) {
-        Ok(_) => Ok(true),
-        Err(err) => {
-            if let windows_service::Error::Winapi(ref err) = err {
-                if let Some(code) = err.raw_os_error() {
-                    if code == Foundation::ERROR_FAILED_SERVICE_CONTROLLER_CONNECT as i32 {
-                        return Ok(false);
-                    }
+                // this adds an additional space between each display
+                // it is done prior to ensure there is no trailing whitespace
+                if index != 0 {
+                    println!("");
                 }
-            }
 
-            Err(err)
+                println!(
+                    "{}:
+    Index: {}
+    Refresh Rate: {}
+    Size: {}x{}",
+                    display.name().to_string_lossy(),
+                    index,
+                    display.refresh_rate(),
+                    size.0,
+                    size.1
+                );
+            }
+        }
+        Action::Set {
+            name,
+            index,
+            refresh_rate,
+            width,
+            height,
+            x,
+            y,
+        } => {
+            let mut display = match name {
+                Some(name) => {
+                    let name = U16String::from_os_str(&name).as_ptr();
+                    Display::new(name)?
+                }
+                // in this case the `index` is guaranteed to be specified
+                None => {
+                    let index = index.unwrap();
+                    Display::from_index(index)?
+                }
+            };
+
+            let size = display.size();
+            let config = DisplayConfig {
+                refresh_rate,
+                position: if x.is_some() || y.is_some() {
+                    Some((x.unwrap(), y.unwrap()))
+                } else {
+                    None
+                },
+                size: Some((width.unwrap_or(size.0), height.unwrap_or(size.1))),
+            };
+
+            display.update(config)?;
         }
     }
+
+    Ok(())
 }
 
-fn main() {
-    // config file should be at %LOCALAPPDATA%
-
-    match ran_as_service() {
-        Ok(is_service) => match is_service {
-            true => {}
-            false => {
-                let args = Options::parse();
-                match args.action {
-                    Action::Install => {}
-                    Action::Uninstall { delete_config } => {}
-                    Action::Update => {}
-                    Action::List {} => {}
-                    Action::Set {
-                        name,
-                        refresh_rate,
-                        width,
-                        height,
-                        x,
-                        y,
-                    } => {
-                        let name = name.encode_wide().collect::<Vec<u16>>().as_ptr();
-                        // TODO: remove unwrap
-                        let mut display = Display::new(name).unwrap();
-                        if let Some(refresh_rate) = refresh_rate {
-                            display.set_refresh_rate(refresh_rate);
-                        }
-                        if let Some(width) = width {
-                            display.set_width(width);
-                        }
-                        if let Some(height) = height {
-                            display.set_height(height);
-                        }
-
-                        // x is required when y is specified and y is required when x is specified
-                        if x.is_some() || y.is_some() {
-                            display.set_position((x.unwrap(), y.unwrap()))
-                        }
-
-                        // TODO: handle result
-                        display.update().unwrap();
-                    }
-                }
-            }
-        },
-        // TODO
-        Err(err) => Err(err).unwrap(),
-    }
+fn main() -> Result<(), Error> {
+    let args = Options::parse();
+    run(args.action)
 }
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
     Win32(io::Error),
+}
+
+impl Error {
+    pub fn last_os_error() -> Error {
+        Error::Win32(io::Error::last_os_error())
+    }
 }

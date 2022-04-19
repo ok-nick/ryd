@@ -7,7 +7,7 @@ use widestring::{U16CStr, U16CString};
 use windows_sys::{
     core::PCWSTR,
     Win32::{
-        Foundation::{POINTL, self},
+        Foundation::{self, POINTL},
         Graphics::Gdi::{
             self, ChangeDisplaySettingsW, EnumDisplayDevicesW, EnumDisplaySettingsW, DEVMODEW,
             DISPLAY_DEVICEW,
@@ -57,31 +57,34 @@ impl Display {
         unsafe {
             addr_of_mut!((*info.as_mut_ptr()).cb).write(mem::size_of::<DISPLAY_DEVICEW>() as u32);
         }
-        let success = unsafe {
+
+        match unsafe {
             EnumDisplayDevicesW(
                 ptr::null_mut() as PCWSTR,
                 index,
                 &mut info as *mut _ as *mut _,
                 0,
             )
-        };
-
-        let info = unsafe { info.assume_init() };
-        match success {
+        } {
             0 => Err(Error::last_os_error()),
-            _ => Display::new(&info.DeviceName as PCWSTR),
+            _ => {
+                let info = unsafe { info.assume_init() };
+                Display::new(&info.DeviceName as PCWSTR)
+            }
         }
     }
 
-    /// These values may be outdated and could be refreshed by creating a new `Display`
+    /// Refresh rate of the display in hertz. This value may be out of date.  
     pub fn refresh_rate(&self) -> u32 {
         self.inner.dmDisplayFrequency
     }
 
+    /// Size of the disdplay. This value may be out of date.
     pub fn size(&self) -> (u32, u32) {
         (self.inner.dmPelsWidth, self.inner.dmPelsHeight)
     }
 
+    /// Name of the display. This value may be out of date.
     pub fn name(&self) -> &U16CStr {
         &self.name
     }
@@ -89,6 +92,9 @@ impl Display {
     // TODO: other props,
     // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-changedisplaysettingsw
 
+    // TODO: `self.inner` should be cloned or something so that in the case of an error, the three
+    // getter functions do not output incorrect values.
+    /// Updates the display's configuration. 
     pub fn update(&mut self, config: DisplayConfig) -> Result<(), Error> {
         if let Some(refresh_rate) = config.refresh_rate {
             self.inner.dmFields |= Gdi::DM_DISPLAYFREQUENCY as u32;

@@ -4,3 +4,5 @@
 </div>
 
 `ryd` is a command line interface for listing and changing display configurations.
+
+Needs docs and tests.
